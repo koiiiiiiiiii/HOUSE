@@ -6,3 +6,4 @@ pypinyin
 lxml
 matplotlib
 openpyxl
+akshare
