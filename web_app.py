@@ -37,7 +37,7 @@ def analyze_data(df):
     try:
         # 寻找包含 'Gross Rental Yield' (租金收益率) 的那一行
         # regex=True 表示模糊匹配
-        yield_row = df[df['指标名称'].str.contains('Gross Rental Yield \(City Centre\)', regex=True)]
+        yield_row = df[df['指标名称'].str.contains(r'Gross Rental Yield \(City Centre\)', regex=True)]
         
         if not yield_row.empty:
             # --- 关键修复在这里 ---
