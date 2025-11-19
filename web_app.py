@@ -1,93 +1,82 @@
-﻿import requests
+﻿import streamlit as st
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+from pypinyin import lazy_pinyin
 import matplotlib.pyplot as plt
-from io import StringIO  # 新增工具，用来消除那个红色的警告
+import time
 
-# --- 1. 设置部分 ---
-CITY_URL = "https://www.numbeo.com/property-investment/in/jurong"
-BOND_YIELD = 2.1  # 国债收益率
+# 1. 设置网页标题
+st.set_page_config(page_title="房价监控系统", layout="centered")
 
-def get_house_data():
-    print(f"正在尝试获取上海的数据: {CITY_URL} ...")
+# 2. 网页的大标题 (必须用 st.title 才能看见)
+st.title("🏠 城市房价监控系统 (Web版)")
+st.info("请在下方输入城市名字，然后点击按钮。")
+
+# 3. 输入区域
+col1, col2 = st.columns(2)
+with col1:
+    # 获取用户输入
+    city_input = st.text_input("请输入城市 (如: 句容)", value="句容")
+with col2:
+    bond_yield = st.number_input("国债收益率 (%)", value=2.1)
+
+# 4. 爬虫逻辑 (房天下版 - 兼容小城市)
+def get_data(city_name):
+    pinyin = "".join(lazy_pinyin(city_name))
+    url = f"https://{pinyin}.esf.fang.com/"
     
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'}
     
     try:
-        response = requests.get(CITY_URL, headers=headers, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=8)
+        resp.encoding = 'gbk' # 关键：房天下防乱码
+        soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # 修复警告：用 StringIO 包装一下网页内容
-        tables = pd.read_html(StringIO(response.text))
+        # 找价格
+        price = 0
+        spans = soup.find_all('span', class_='red')
+        for s in spans:
+            if s.text.strip().isdigit() and len(s.text.strip()) > 3:
+                price = int(s.text.strip())
+                break
         
-        df = tables[1]
-        df.columns = ['指标名称', '数值']
-        return df
-        
-    except Exception as e:
-        print(f"获取数据出错：{e}")
-        return None
-
-def analyze_data(df):
-    if df is None:
-        return
-    
-    print("\n--- 获取成功！数据清洗中 ---")
-    
-    try:
-        # 寻找包含 'Gross Rental Yield' (租金收益率) 的那一行
-        # regex=True 表示模糊匹配
-        yield_row = df[df['指标名称'].str.contains(r'Gross Rental Yield \(City Centre\)', regex=True)]
-        
-        if not yield_row.empty:
-            # --- 关键修复在这里 ---
-            # 拿到原始文字 (例如 "1.55%")
-            raw_value = str(yield_row.iloc[0]['数值'])
-            
-            # 把 '%' 替换为空白，然后去除首尾空格
-            clean_value = raw_value.replace('%', '').strip()
-            
-            # 变成数字
-            rental_yield = float(clean_value)
-            
-            print(f"\n📊 上海市中心租金收益率: {rental_yield}%")
-            print(f"💰 国债无风险收益率: {BOND_YIELD}%")
-            
-            diff = rental_yield - BOND_YIELD
-            print("-" * 30)
-            if diff > 0:
-                print(f"✅ 结论：买房收租比买国债划算，高出 {diff:.2f}%")
-            else:
-                print(f"❌ 结论：买房不如买国债！房产收益低了 {abs(diff):.2f}%")
-            print("-" * 30)
+        if price == 0:
+            div = soup.find(class_='org bold')
+            if div:
+                price = int(div.text.strip())
                 
-            # 画图
-            names = ['House Yield', 'Bond Yield']
-            values = [rental_yield, BOND_YIELD]
-            
-            plt.figure(figsize=(6, 4)) # 设置图片大小
-            # 柱状图：房产用红色(危险?)，国债用绿色(安全?)
-            bars = plt.bar(names, values, color=['#FF6B6B', '#4ECDC4'])
-            
-            # 在柱子上标数字
-            for bar in bars:
-                height = bar.get_height()
-                plt.text(bar.get_x() + bar.get_width()/2., height,
-                        f'{height}%', ha='center', va='bottom')
+        return price
+    except Exception as e:
+        return 0
 
-            plt.title('Shanghai Property vs China 10Y Bond')
-            plt.ylabel('Annual Yield (%)')
-            plt.show()
+# 5. 按钮点击后的逻辑
+if st.button("🚀 开始分析", type="primary"):
+    if not city_input:
+        st.warning("请输入城市名字")
+    else:
+        with st.spinner(f"正在连接服务器查询【{city_input}】..."):
+            # 运行爬虫
+            price = get_data(city_input)
+            time.sleep(0.5) # 模拟一点延迟让用户有感觉
+            
+        if price > 0:
+            # 计算
+            rent_est = price / 700
+            yield_rate = (rent_est * 12 / price) * 100
+            
+            # 显示大数字 (Metrics)
+            st.metric("二手房均价", f"{price} 元/㎡")
+            st.metric("估算年化回报率", f"{yield_rate:.2f}%", delta=f"{yield_rate - bond_yield:.2f}% vs 国债")
+            
+            # 画图 (必须用 st.pyplot)
+            fig, ax = plt.subplots()
+            bars = ax.bar(['House', 'Bond'], [yield_rate, bond_yield], color=['#ff9999', '#66b3ff'])
+            ax.set_title(f"{city_input} Yield vs Bond")
+            ax.set_ylabel("Yield (%)")
+            
+            # 在网页上显示图表
+            st.pyplot(fig)
             
         else:
-            print("没找到租金收益率数据，可能网页结构变了。")
-            print("当前表格内容：")
-            print(df)
-            
-    except Exception as e:
-        print(f"分析时出错: {e}")
-
-# --- 运行程序 ---
-if __name__ == "__main__":
-    data = get_house_data()
-    analyze_data(data)
+            st.error("未找到数据。可能原因：1.城市拼音不对 2.该城市太小房天下没收录 3.反爬虫拦截")
